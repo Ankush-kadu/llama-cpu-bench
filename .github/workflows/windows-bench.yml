@@ -11,7 +11,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [native, portable]   # portable = no AVX/AVX2/FMA/F16C (old Celeron / Pentium counter PCs)
+        # CPU tiers of counter PCs: avx2 (Haswell+), avx (Sandy/Ivy Bridge Core i3/i5), sse42 (Celeron/Pentium without AVX)
+        build: [native, avx2, avx, sse42]
     steps:
       - name: CPU info
         shell: pwsh
@@ -24,10 +25,12 @@ jobs:
           git clone https://github.com/ggml-org/llama.cpp lc
           cd lc
           git checkout 620d2225cc436ab0b001e3200e590e3b286ef9ab
-          if ("${{ matrix.build }}" -eq "portable") {
-            cmake -B build -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DLLAMA_CURL=OFF
-          } else {
-            cmake -B build -DLLAMA_CURL=OFF
+          $off = "-DGGML_NATIVE=OFF -DLLAMA_CURL=OFF"
+          switch ("${{ matrix.build }}") {
+            "avx2"  { cmake -B build $off.Split(" ") -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON }
+            "avx"   { cmake -B build $off.Split(" ") -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF }
+            "sse42" { cmake -B build $off.Split(" ") -DGGML_SSE42=ON -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF }
+            default { cmake -B build -DLLAMA_CURL=OFF }
           }
           cmake --build build --config Release -j 4 --target llama-bench
       - name: Download public model
