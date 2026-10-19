@@ -1,0 +1,45 @@
+# CI-VM benchmark (D-015 #4): Windows build + speed of the PUBLIC Qwen3-0.6B Q4_K_M on GitHub's free Windows runner.
+# Same llama.cpp commit and inference settings as the phone app; synthetic only. Numbers are CI-VM, never device claims.
+name: windows-bench
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  bench:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [native, portable]   # portable = no AVX/AVX2/FMA/F16C (old Celeron / Pentium counter PCs)
+    steps:
+      - name: CPU info
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | Format-List
+          Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory | Format-List
+      - name: Build llama.cpp (pinned)
+        shell: pwsh
+        run: |
+          git clone https://github.com/ggml-org/llama.cpp lc
+          cd lc
+          git checkout 620d2225cc436ab0b001e3200e590e3b286ef9ab
+          if ("${{ matrix.build }}" -eq "portable") {
+            cmake -B build -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DLLAMA_CURL=OFF
+          } else {
+            cmake -B build -DLLAMA_CURL=OFF
+          }
+          cmake --build build --config Release -j 4 --target llama-bench
+      - name: Download public model
+        shell: pwsh
+        run: Invoke-WebRequest -Uri https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf -OutFile model.gguf
+      - name: Bench (app settings)
+        shell: pwsh
+        run: |
+          $b = Get-ChildItem -Recurse lc/build -Filter llama-bench.exe | Select-Object -First 1
+          & $b.FullName -m model.gguf -t 2,4 -p 128 -n 64 -d 0,768 -r 3 -ctk f16 -ctv f16 -fa off -o json > bench-${{ matrix.build }}.json
+          Get-Content bench-${{ matrix.build }}.json | Select-Object -First 40
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.build }}
+          path: bench-${{ matrix.build }}.json
